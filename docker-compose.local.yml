@@ -1,0 +1,46 @@
+# 本地部署：复用宿主机上已有的 PostgreSQL / Redis 容器
+#
+# 前提（对应本机现状）：
+#   - PostgreSQL 容器名 postgres，账号 root / 密码 123456，使用库 new-api（另有 mydb），已把 5432 映射到宿主机
+#   - Redis 容器名 redis-server，无密码，已把 6379 映射到宿主机（需先 docker start redis-server）
+#
+# 配置来源：同目录的 .env.local，只使用 .env.example 中已有的变量：
+#   - 除 PORT 外的变量通过 env_file 注入容器
+#   - PORT 还要参与 compose 插值，而插值不读 env_file，只认 --env-file、
+#     COMPOSE_ENV_FILES 或项目目录下的 .env；改端口时需带 --env-file .env.local
+#     或用 COMPOSE_ENV_FILES=.env.local，否则用下面的 :- 默认值 3000
+#   - .env.local 不存在时 compose 不报错，程序按默认值启动（SQLite + 无 Redis）
+#   - TZ / NODE_NAME 不在 .env.example 中，不属于 env 文件变量，跟上游 docker-compose.yml
+#     一样写在 environment 里，优先级高于 env_file
+#
+# 启动：
+#   docker compose --env-file .env.local -f docker-compose.local.yml up -d
+# 查看日志：
+#   docker compose --env-file .env.local -f docker-compose.local.yml logs -f new-api
+# 停止：
+#   docker compose --env-file .env.local -f docker-compose.local.yml down
+
+services:
+  new-api:
+    image: calciumion/new-api:latest
+    container_name: new-api
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_NAME=new-api-node-1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:${PORT:-3000}/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

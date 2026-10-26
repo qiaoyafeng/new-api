@@ -9,9 +9,18 @@
 #   - PORT 还要参与 compose 插值，而插值不读 env_file，只认 --env-file、
 #     COMPOSE_ENV_FILES 或项目目录下的 .env；改端口时需带 --env-file .env.local
 #     或用 COMPOSE_ENV_FILES=.env.local，否则用下面的 :- 默认值 3000
-#   - .env.local 不存在时 compose 不报错，程序按默认值启动（SQLite + 无 Redis）
+#   - .env.local 不存在时 compose 报错（旧版 compose 不支持 required: false）
 #   - TZ / NODE_NAME 不在 .env.example 中，不属于 env 文件变量，跟上游 docker-compose.yml
 #     一样写在 environment 里，优先级高于 env_file
+#
+# 兼容性：
+#   - env_file 用短字符串写法，兼容 Compose < 2.24（旧版不支持 path/required 对象形式）
+#   - extra_hosts 的网关 IP 不写死，用 shell 变量 DOCKER_HOST_GATEWAY 覆盖，
+#     未设置时回退到 172.17.0.1；该变量只给 compose 插值用，不写进 .env.local，
+#     不改变 .env.example 的变量集。Linux 上取当前宿主机网关：
+#       export DOCKER_HOST_GATEWAY=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+#       或单次生效：DOCKER_HOST_GATEWAY=... docker compose --env-file .env.local -f docker-compose.local.yml up -d
+#     Docker ≥ 20.10 可直接把下面这行改成 host.docker.internal:host-gateway，无需任何变量
 #
 # 启动：
 #   docker compose --env-file .env.local -f docker-compose.local.yml up -d
@@ -32,13 +41,12 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     env_file:
-      - path: .env.local
-        required: false
+      - .env.local
     environment:
       - TZ=Asia/Shanghai
       - NODE_NAME=new-api-node-1
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:${DOCKER_HOST_GATEWAY:-172.17.0.1}"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:${PORT:-3000}/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
